@@ -1,0 +1,41 @@
+
+
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.vscode/
+.idea/
+*.code-workspace
+
+# Node/JS tooling
+node_modules/
+dist/
+build/
+*.log
+
+# Rust artifacts
+target/
+Cargo.lock
+
+# Python optional
+__pycache__/
+*.pyc
+venv/
+.env
+
+# LLM artifacts
+*.sqlite
+*.db
+llm_output/
+.llm_cache/
+
+# Markdown render outputs
+*.preview.html
+*.rendered.md
+
+# .gitignore
+scripts/buildfs/
+scripts/alpine_rootfs.tar

@@ -1,0 +1,36 @@
+
+
+# hello_api module
+
+# tools
+axum
+serde
+tokio
+
+# server
+- bind to 127.0.0.1:8080
+- serve static files from ./public
+
+# routes
+root path prefix: /api
+
+GET /hello
+- returns: 200 OK with JSON message "Hello, world!"
+
+POST /echo
+- expects JSON with field "message"
+- returns: 200 OK with same message wrapped in response object
+
+# types
+
+EchoRequest
+- message is string
+
+EchoResponse
+- echoed is string
+
+# async
+- all handlers are async
+
+# notes
+- note: this is a minimal example of ClawMark defining an HTTP API

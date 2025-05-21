@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ClawMark Editor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+    }
+    #container {
+      height: calc(100vh - 4rem);
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+  <header class="bg-gray-800 text-white text-sm px-4 py-2 flex justify-between items-center">
+    <span class="font-mono text-lg">ClawMark Editor</span>
+    <div class="flex items-center gap-2">
+      <input id="endpointInput" class="text-black text-sm px-2 py-1 rounded" style="width: 20rem;" value="http://localhost:11434/api/generate" />
+      <button id="shellButton" class="bg-blue-500 px-3 py-1 rounded hover:bg-blue-600">Shell</button>
+      <button id="runButton" class="bg-green-500 px-3 py-1 rounded hover:bg-green-600">Run</button>
+      <button id="clippyButton" class="bg-purple-500 px-3 py-1 rounded hover:bg-purple-600">Clippy</button>
+      <button id="buildButton" class="bg-yellow-500 px-3 py-1 rounded hover:bg-yellow-600">Build</button>
+    </div>
+  </header>
+  <div class="grid grid-cols-3 h-[calc(100vh-4rem)]">
+    <div id="container" class="col-span-1 border-r border-gray-300"></div>
+    <div id="rendered" class="col-span-1 overflow-y-auto p-4 prose bg-white"></div>
+    <div id="output" class="col-span-1 overflow-y-auto bg-black text-green-400 p-2 font-mono text-sm"></div>
+  </div>
+
+  <div id="v86shell" class="hidden border-t border-gray-300 h-[40vh]">
+    <div id="v86_container" class="w-full h-full"></div>
+    <script src="https://copy.sh/v86/build/libv86.js"></script>
+  </div>
+
+  <script>
+    require.config({ paths: { vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs" } });
+    require(["vs/editor/editor.main"], function () {
+      monaco.languages.register({ id: 'clawmark' });
+
+      monaco.languages.setMonarchTokensProvider('clawmark', {
+        tokenizer: {
+          root: [
+            [/^#\s.+/, 'keyword'],
+            [/^##\s.+/, 'keyword'],
+            [/^- .+/, 'string'],
+            [/note:/i, 'type.identifier'],
+            [/todo:/i, 'invalid'],
+            [/\b(GET|POST|PUT|DELETE|PATCH)\b/, 'keyword'],
+            [/\breturns:\b/, 'type'],
+            [/\broot path prefix\b/, 'type.identifier'],
+            [/\bis\b/, 'operator'],
+            [/".*?"/, 'string'],
+            [/\d+/, 'number']
+          ]
+        }
+      });
+
+      monaco.editor.defineTheme('clawmark-theme', {
+        base: 'vs',
+        inherit: true,
+        rules: [
+          { token: 'keyword', foreground: '1e88e5', fontStyle: 'bold' },
+          { token: 'type.identifier', foreground: '43a047', fontStyle: 'italic' },
+          { token: 'invalid', foreground: 'e53935', fontStyle: 'italic' },
+          { token: 'string', foreground: '6a1b9a' },
+          { token: 'number', foreground: '00897b' },
+          { token: 'operator', foreground: '546e7a' }
+        ],
+        colors: {}
+      });
+
+      monaco.languages.registerCompletionItemProvider('clawmark', {
+        triggerCharacters: [' ', ':', '/', '#'],
+        provideCompletionItems: function () {
+          return {
+            suggestions: [
+              { label: 'note:', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'note: ' },
+              { label: 'todo:', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'todo: ' },
+              { label: 'returns:', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'returns: ' },
+              { label: '# routes', kind: monaco.languages.CompletionItemKind.Module, insertText: '# routes\n' },
+              { label: 'GET /path', kind: monaco.languages.CompletionItemKind.Snippet, insertText: 'GET /${1:path}\n- returns: ${2:200 OK}' }
+            ]
+          };
+        }
+      });
+
+      monaco.languages.setLanguageConfiguration('clawmark', {
+        comments: { lineComment: "//" },
+        brackets: [],
+        autoClosingPairs: [
+          { open: '"', close: '"' },
+          { open: '`', close: '`' }
+        ],
+        surroundingPairs: [
+          { open: '"', close: '"' },
+          { open: '`', close: '`' }
+        ]
+      });
+
+      monaco.editor.setTheme('clawmark-theme');
+
+      const editor = monaco.editor.create(document.getElementById("container"), {
+        value: "# hello_api module\n\n# routes\nroot path prefix: /api\n\nGET /hello\n- returns: 200 OK with JSON",
+        language: "clawmark",
+        automaticLayout: true
+      });
+      // Restore endpoint from localStorage if available
+      const saved = localStorage.getItem("clawmark-endpoint");
+      if (saved) document.getElementById("endpointInput").value = saved;
+
+      document.getElementById("runButton").addEventListener("click", async () => {
+        const prompt = editor.getValue();
+        if (window.marked) {
+          document.getElementById("rendered").innerHTML = window.marked.parse(prompt);
+        } else {
+          document.getElementById("rendered").innerHTML = "<p class='text-red-600'>Marked not loaded</p>";
+        }
+        const shell = document.getElementById("v86shell");
+        const responseBox = document.getElementById("output");
+        responseBox.textContent = "Contacting Ollama...";
+        try {
+          const endpointInput = document.getElementById("endpointInput");
+          // Store endpoint in localStorage
+          localStorage.setItem("clawmark-endpoint", endpointInput.value);
+          const largeContext = await fetch("llm-context-large.md").then(r => r.text());
+          const result = await fetch(endpointInput.value, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "codellama",
+              prompt: `${largeContext}
+
+You will be given a ClawMark specification written in simplified Markdown.
+Your task is to generate idiomatic Rust code that fulfills its intent.
+
+- The output must compile and pass Clippy without warnings.
+- Use Result<T, E> over unwraps.
+- Prefer async functions where I/O is implied.
+- Use Serde and appropriate crates.
+- Structure your code with idiomatic Rust best practices.
+
+Respond with only valid Rust source code. Do not include:
+- Markdown formatting
+- Explanations
+- Comments
+- Code fences (\`\`\`)
+
+Begin immediately with use, fn, mod, or struct.
+
+ClawMark input:
+
+${prompt}`,
+              stream: false
+            })
+          }).then(r => r.json());
+          responseBox.textContent = 
+            (result.response || "")
+              .replace(/```(?:rust)?/gi, "")
+              .replace(/^Here.*?:/i, "")
+              .trim() || "(no response)";
+
+          if (!shell.classList.contains("hidden") && typeof emulator !== "undefined") {
+            const source = (result.response || "")
+              .replace(/```(?:rust)?/gi, "")
+              .replace(/^Here.*?:/i, "")
+              .trim();
+
+            const codeLines = source
+              .replace(/\\/g, "\\\\")
+              .replace(/"/g, '\\"')
+              .split("\n")
+              .map(line => `echo "${line}" >> /root/src/main.rs`)
+              .join("\n");
+
+            const cargoToml = `
+[package]
+name = "clawmark_gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+warp = "0.3"
+    `.trim().split("\n").map(line => `echo "${line.replace(/"/g, '\\"')}" >> /root/Cargo.toml`).join("\n");
+
+            const fullScript = `
+mkdir -p /root/src
+rm -f /root/src/main.rs /root/Cargo.toml
+${codeLines}
+${cargoToml}
+`.trim();
+
+            emulator.serial0_send(fullScript + "\n");
+          }
+        } catch (e) {
+          responseBox.textContent = `Error: ${e.message}`;
+        }
+      });
+
+      let v86Initialized = false;
+      document.getElementById("shellButton").addEventListener("click", () => {
+        const shell = document.getElementById("v86shell");
+        shell.classList.toggle("hidden");
+
+        if (!v86Initialized && !shell.classList.contains("hidden")) {
+          v86Initialized = true;
+
+          requestAnimationFrame(() => {
+            const emulator = new V86({
+              wasm_path: "v86/v86.wasm",
+              memory_size: 256 * 1024 * 1024,
+              vga_memory_size: 8 * 1024 * 1024,
+              screen_container: document.getElementById("v86_container"),
+              bios: { url: "v86/seabios.bin" },
+              vga_bios: { url: "v86/vgabios.bin" },
+              bzimage: { url: "v86/vmlinuz" },
+              initrd: { url: "v86/initrd" },
+              filesystem: { basefs: "v86/fs.json" },
+              autostart: true,
+              cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose"
+            });
+
+            emulator.add_listener("serial0-output-char", char => {
+              document.getElementById("output").textContent += char;
+            });
+
+            window.emulator = emulator;
+          });
+        }
+      });
+    });
+
+    // Add build and clippy button event listeners
+    document.getElementById("buildButton").addEventListener("click", () => {
+      if (window.emulator) {
+        document.getElementById("output").textContent += "\n🚧 Building /root/main.rs...\n";
+        emulator.serial0_send("rustc /root/main.rs -o /root/main && echo Build complete\n");
+      }
+    });
+
+    document.getElementById("clippyButton").addEventListener("click", () => {
+      if (window.emulator) {
+        document.getElementById("output").textContent += "\n🔍 Running cargo clippy...\n";
+        emulator.serial0_send("cargo clippy --manifest-path=/root/Cargo.toml || echo Clippy check failed\n");
+      }
+    });
+  </script>
+</body>
+  <script>
+    (async () => {
+      if (!window.marked) {
+        const module = await import("https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/lib/marked.esm.min.js");
+        window.marked = module.marked;
+      }
+    })();
+  </script>
+</html>
