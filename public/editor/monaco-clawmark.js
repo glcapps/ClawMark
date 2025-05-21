@@ -1,7 +1,6 @@
 
-
-export function registerClawmark(monaco) {
-  monaco.languages.register({ id: 'clawmark' });
+window.registerClawmark = function(monaco) {
+  monaco.languages.register({ id: 'clawmark', aliases: ['ClawMark'] });
 
   monaco.languages.setMonarchTokensProvider('clawmark', {
     tokenizer: {

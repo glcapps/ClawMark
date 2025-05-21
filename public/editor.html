@@ -5,6 +5,9 @@
   <title>ClawMark Editor</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <script src="editor/monaco-theme-clawmark.js"></script>
+  <script src="editor/monaco-autocomplete-clawmark.js"></script>
+  <script src="editor/monaco-clawmark.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body {
@@ -104,6 +107,10 @@
       });
 
       monaco.editor.setTheme('clawmark-theme');
+
+      if (window.registerClawmark) registerClawmark(monaco);
+      if (window.registerClawmarkAutocomplete) registerClawmarkAutocomplete(monaco);
+      if (window.defineClawmarkTheme) defineClawmarkTheme(monaco);
 
       const editor = monaco.editor.create(document.getElementById("container"), {
         value: "# hello_api module\n\n# routes\nroot path prefix: /api\n\nGET /hello\n- returns: 200 OK with JSON",

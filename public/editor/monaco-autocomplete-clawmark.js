@@ -1,6 +1,5 @@
 
-
-export function registerClawmarkAutocomplete(monaco) {
+window.registerClawmarkAutocomplete = function(monaco) {
   monaco.languages.registerCompletionItemProvider('clawmark', {
     triggerCharacters: [' ', ':', '/', '#'],
     provideCompletionItems: function (model, position) {

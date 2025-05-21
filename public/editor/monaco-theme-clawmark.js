@@ -1,4 +1,4 @@
-export function defineClawmarkTheme(monaco) {
+window.defineClawmarkTheme = function(monaco) {
   monaco.editor.defineTheme('clawmark-theme', {
     base: 'vs',
     inherit: true,
