@@ -65,4 +65,4 @@ POST /users
 - Language spec and documentation: CC BY 4.0
 
 ---
-Visit [grizzled.dev](https://grizzled.dev) for updates and documentation.
+Visit [grizzled.tech](https://grizzled.tech) for updates and documentation.
