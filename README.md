@@ -61,8 +61,7 @@ POST /users
 
 ## 📄 License
 
-- Source code: MIT
-- Language spec and documentation: CC BY 4.0
+- Source code: Apeche 2.0
 
 ---
 Visit [grizzled.tech](https://grizzled.tech) for updates and documentation.
