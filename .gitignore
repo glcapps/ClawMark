@@ -36,6 +36,14 @@ llm_output/
 *.preview.html
 *.rendered.md
 
-# .gitignore
+
+# Exclude local-only files in public/ but allow the directory
+!public/
+!public/**
+
+# Explicitly ignore build artifacts that shouldn't go to GitHub Pages
+public/v86/fs.json
+public/v86/initrd
+public/v86/vmlinuz
 scripts/buildfs/
 scripts/alpine_rootfs.tar
