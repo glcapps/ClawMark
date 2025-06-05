@@ -21,6 +21,9 @@
     #output {
       white-space: pre-wrap;
     }
+    #outputLogs, #outputCode {
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body class="bg-gray-100">
@@ -36,6 +39,7 @@
         <option value="">(loading models...)</option>
       </select>
       <input id="endpointInput" class="text-black text-sm px-2 py-1 rounded" style="width: 20rem;" value="http://localhost:11434/api/generate" />
+      <button id="resetEndpointButton" class="bg-blue-500 px-2 py-1 rounded text-white hover:bg-blue-600 text-sm">Reset</button>
       <button id="generateButton" class="bg-green-500 px-3 py-1 rounded hover:bg-green-600 disabled:bg-green-300 disabled:cursor-not-allowed">Generate</button>
       <button id="clippyButton" class="bg-purple-500 px-3 py-1 rounded hover:bg-purple-600 disabled:bg-purple-300 disabled:cursor-not-allowed">Clippy</button>
       <button id="buildButton" class="bg-yellow-500 px-3 py-1 rounded hover:bg-yellow-600 disabled:bg-yellow-300 disabled:cursor-not-allowed">Build</button>
@@ -44,7 +48,10 @@
   <div class="grid grid-cols-3 h-[calc(100vh-4rem)]">
     <div id="container" class="col-span-1 border-r border-gray-300"></div>
     <div id="rendered" class="col-span-1 overflow-y-auto p-4 prose bg-white"></div>
-    <div id="output" class="col-span-1 overflow-y-auto bg-black text-green-400 p-2 font-mono text-sm"></div>
+    <div class="col-span-1 flex flex-col">
+      <div id="outputLogs" class="flex-1 overflow-y-auto bg-black text-green-400 p-2 font-mono text-sm"></div>
+      <div id="outputCode" class="flex-1 overflow-y-auto bg-gray-900 text-green-200 p-2 font-mono text-sm border-t border-gray-600"></div>
+    </div>
   </div>
 
   <div id="v86shell" class="border-t border-gray-300 h-[40vh]">
@@ -128,9 +135,17 @@
         language: "clawmark",
         automaticLayout: true
       });
+      // Endpoint reset and default value
+      const endpointInput = document.getElementById("endpointInput");
+      const resetEndpointButton = document.getElementById("resetEndpointButton");
+      const defaultEndpoint = "http://localhost:11434/api/generate";
       // Restore endpoint from localStorage if available
       const saved = localStorage.getItem("clawmark-endpoint");
-      if (saved) document.getElementById("endpointInput").value = saved;
+      if (saved) endpointInput.value = saved;
+      resetEndpointButton.addEventListener("click", () => {
+        endpointInput.value = defaultEndpoint;
+        localStorage.setItem("clawmark-endpoint", defaultEndpoint);
+      });
 
       function waitForEmulatorReady() {
         return new Promise(resolve => {
@@ -166,10 +181,10 @@
           document.getElementById("rendered").innerHTML = "<p class='text-red-600'>Marked not loaded</p>";
         }
         const shell = document.getElementById("v86shell");
-        const responseBox = document.getElementById("output");
-        responseBox.textContent = "Contacting Ollama...";
+        const responseBox = document.getElementById("outputLogs");
+        responseBox.textContent += "\n\n--- New Generation Request ---\n🧠 Contacting Ollama...\n";
         try {
-          const endpointInput = document.getElementById("endpointInput");
+          // Use endpointInput and defaultEndpoint consistently
           const selectedProtocol = document.getElementById("protocolSelect").value;
           const selectedModel = document.getElementById("modelSelect").value;
           // Store endpoint in localStorage
@@ -185,10 +200,9 @@
               responseBox.textContent = "⚠️ Model 'codellama' not found on Ollama. Please pull it using 'ollama pull codellama'.";
               return;
             }
-            responseBox.textContent += "\n✅ 'codellama' model detected at endpoint.";
           } catch (checkErr) {
             console.error("Failed to check model availability:", checkErr);
-            responseBox.textContent = "Error contacting Ollama to verify model availability.";
+            responseBox.textContent += "❌ Error contacting Ollama to verify model availability.\n";
             return;
           }
 
@@ -202,6 +216,8 @@
               // Default model is "codellama:latest", but other tags like "codellama:13b" or "codellama:7b-code" are also valid.
               model: selectedModel || "codellama:latest",
               temperature: 0,
+              top_p: 1,
+              top_k: 1,
               prompt: `${largeContext}
 
 You will be given a ClawMark specification written in simplified Markdown.
@@ -221,6 +237,8 @@ Respond with only valid Rust source code. Do not include:
 
 Begin immediately with use, fn, mod, or struct.
 
+Terminate the response with an empty \`mod end {}\` block. Do not include anything after that.
+
 ClawMark input:
 
 ${prompt}`,
@@ -230,6 +248,8 @@ ${prompt}`,
             fetchPayload = {
               model: selectedModel || "gpt-4",
               temperature: 0,
+              top_p: 1,
+              top_k: 1,
               messages: [
                 {
                   role: "system",
@@ -250,7 +270,9 @@ Respond with only valid Rust source code. Do not include:
 - Comments
 - Code fences (\`\`\`)
 
-Begin immediately with use, fn, mod, or struct.`
+Begin immediately with use, fn, mod, or struct.
+
+Terminate the response with an empty \`mod end {}\` block. Do not include anything after that.`
                 },
                 {
                   role: "user",
@@ -274,12 +296,13 @@ Begin immediately with use, fn, mod, or struct.`
             : (result.response || "");
 
           responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
-          responseBox.textContent = 
-            (responseText
-              .replace(/```(?:rust)?/gi, "")
-              .replace(/^Here.*?:/i, "")
-              .trim()
-              .replace(/\n/g, "\n")) || "(no response)";
+          const trimmedResponse = responseText
+            .replace(/```(?:rust)?/gi, "")
+            .replace(/^Here.*?:/i, "")
+            .replace(/mod end\s*{[^}]*}\s*[\s\S]*$/i, "mod end {}")
+            .trim();
+
+          document.getElementById("outputCode").textContent = trimmedResponse || "(no response)";
 
           // Enable Clippy and Build buttons after successful generation
           clippyBtn.disabled = false;
@@ -342,7 +365,7 @@ ${cargoToml}
       });
 
       emulator.add_listener("serial0-output-char", char => {
-        document.getElementById("output").textContent += char;
+        document.getElementById("outputLogs").textContent += char;
       });
 
       window.emulator = emulator;
@@ -353,14 +376,14 @@ ${cargoToml}
     // Add build and clippy button event listeners
     document.getElementById("buildButton").addEventListener("click", () => {
       if (window.emulator) {
-        document.getElementById("output").textContent += "\n🚧 Building /root/main.rs...\n";
+        document.getElementById("outputLogs").textContent += "\n🚧 Building /root/main.rs...\n";
         emulator.serial0_send("rustc /root/main.rs -o /root/main && echo Build complete\n");
       }
     });
 
     document.getElementById("clippyButton").addEventListener("click", () => {
       if (window.emulator) {
-        document.getElementById("output").textContent += "\n🔍 Running cargo clippy...\n";
+        document.getElementById("outputLogs").textContent += "\n🔍 Running cargo clippy...\n";
         emulator.serial0_send("cargo clippy --manifest-path=/root/Cargo.toml || echo Clippy check failed\n");
       }
     });
@@ -376,14 +399,24 @@ ${cargoToml}
   </script>
   <script>
     window.addEventListener("DOMContentLoaded", async () => {
-      const responseBox = document.getElementById("output");
+      const responseBox = document.getElementById("outputLogs");
       const endpointInput = document.getElementById("endpointInput");
+      const resetEndpointButton = document.getElementById("resetEndpointButton");
+      const defaultEndpoint = "http://localhost:11434/api/generate";
       const saved = localStorage.getItem("clawmark-endpoint");
       if (saved) endpointInput.value = saved;
+      resetEndpointButton.addEventListener("click", () => {
+        endpointInput.value = defaultEndpoint;
+        localStorage.setItem("clawmark-endpoint", defaultEndpoint);
+      });
 
+      // Improved logging for Ollama/model check
+      responseBox.textContent += "🔍 Verifying Ollama access...\n";
       try {
         const endpoint = endpointInput.value;
-        const models = await fetch(endpoint.replace(/\/generate$/, "/tags")).then(r => r.json());
+        const endpointRoot = endpoint.replace(/\/generate.*/, "");
+        const models = await fetch(`${endpointRoot}/tags`).then(r => r.json());        responseBox.textContent += "✅ Ollama found.\n";
+        responseBox.textContent += "🔍 Verifying Ollama models...\n";
         const hasCodeLlama = Array.isArray(models.models) && models.models.some(m => m.model.startsWith("codellama"));
         if (hasCodeLlama) {
           responseBox.textContent += "✅ codellama model found at load.\n";
@@ -401,8 +434,10 @@ ${cargoToml}
             modelSelect.appendChild(opt);
           });
         }
+        responseBox.textContent += "🔍 Checking on Rust services virtual machine...\n";
       } catch (e) {
         responseBox.textContent += "❌ Failed to contact Ollama on page load.\n";
+        responseBox.textContent += "🔍 Checking on Rust services virtual machine...\n";
         console.error("Error verifying codellama on load:", e);
       }
     });
