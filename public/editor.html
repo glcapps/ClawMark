@@ -9,6 +9,7 @@
   <script src="editor/monaco-autocomplete-clawmark.js"></script>
   <script src="editor/monaco-clawmark.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="prose.css">
   <style>
     html, body {
       margin: 0;
@@ -17,17 +18,27 @@
     #container {
       height: calc(100vh - 4rem);
     }
+    #output {
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body class="bg-gray-100">
   <header class="bg-gray-800 text-white text-sm px-4 py-2 flex justify-between items-center">
     <span class="font-mono text-lg">ClawMark Editor</span>
     <div class="flex items-center gap-2">
+      <select id="protocolSelect" class="text-black text-sm px-2 py-1 rounded">
+        <option value="ollama" selected>Ollama</option>
+        <option value="openai">OpenAI</option>
+        <option value="lmstudio">LMStudio</option>
+      </select>
+      <select id="modelSelect" class="text-black text-sm px-2 py-1 rounded">
+        <option value="">(loading models...)</option>
+      </select>
       <input id="endpointInput" class="text-black text-sm px-2 py-1 rounded" style="width: 20rem;" value="http://localhost:11434/api/generate" />
-      <button id="shellButton" class="bg-blue-500 px-3 py-1 rounded hover:bg-blue-600">Shell</button>
-      <button id="runButton" class="bg-green-500 px-3 py-1 rounded hover:bg-green-600">Run</button>
-      <button id="clippyButton" class="bg-purple-500 px-3 py-1 rounded hover:bg-purple-600">Clippy</button>
-      <button id="buildButton" class="bg-yellow-500 px-3 py-1 rounded hover:bg-yellow-600">Build</button>
+      <button id="generateButton" class="bg-green-500 px-3 py-1 rounded hover:bg-green-600 disabled:bg-green-300 disabled:cursor-not-allowed">Generate</button>
+      <button id="clippyButton" class="bg-purple-500 px-3 py-1 rounded hover:bg-purple-600 disabled:bg-purple-300 disabled:cursor-not-allowed">Clippy</button>
+      <button id="buildButton" class="bg-yellow-500 px-3 py-1 rounded hover:bg-yellow-600 disabled:bg-yellow-300 disabled:cursor-not-allowed">Build</button>
     </div>
   </header>
   <div class="grid grid-cols-3 h-[calc(100vh-4rem)]">
@@ -36,7 +47,7 @@
     <div id="output" class="col-span-1 overflow-y-auto bg-black text-green-400 p-2 font-mono text-sm"></div>
   </div>
 
-  <div id="v86shell" class="hidden border-t border-gray-300 h-[40vh]">
+  <div id="v86shell" class="border-t border-gray-300 h-[40vh]">
     <div id="v86_container" class="w-full h-full"></div>
     <script src="https://copy.sh/v86/build/libv86.js"></script>
   </div>
@@ -121,7 +132,33 @@
       const saved = localStorage.getItem("clawmark-endpoint");
       if (saved) document.getElementById("endpointInput").value = saved;
 
-      document.getElementById("runButton").addEventListener("click", async () => {
+      function waitForEmulatorReady() {
+        return new Promise(resolve => {
+          if (window.emulator) return resolve(window.emulator);
+          const interval = setInterval(() => {
+            if (window.emulator) {
+              clearInterval(interval);
+              resolve(window.emulator);
+            }
+          }, 100);
+        });
+      }
+
+      const generateBtn = document.getElementById("generateButton");
+      generateBtn.disabled = true;
+      generateBtn.title = "Waiting for shell (v86) to initialize...";
+
+      // Disable Clippy and Build buttons by default
+      const clippyBtn = document.getElementById("clippyButton");
+      clippyBtn.disabled = true;
+      clippyBtn.title = "Generate code before using Clippy.";
+
+      const buildBtn = document.getElementById("buildButton");
+      buildBtn.disabled = true;
+      buildBtn.title = "Generate code before building.";
+
+      document.getElementById("generateButton").addEventListener("click", async () => {
+        await waitForEmulatorReady();
         const prompt = editor.getValue();
         if (window.marked) {
           document.getElementById("rendered").innerHTML = window.marked.parse(prompt);
@@ -133,14 +170,38 @@
         responseBox.textContent = "Contacting Ollama...";
         try {
           const endpointInput = document.getElementById("endpointInput");
+          const selectedProtocol = document.getElementById("protocolSelect").value;
+          const selectedModel = document.getElementById("modelSelect").value;
           // Store endpoint in localStorage
           localStorage.setItem("clawmark-endpoint", endpointInput.value);
+
+          // Check if codellama is available on Ollama
+          // Note: The default model used is "codellama:latest", but other tags like "codellama:13b" or "codellama:7b-code" might be valid options.
+          try {
+            const models = await fetch(endpointInput.value.replace(/\/generate$/, "/tags")).then(r => r.json());
+            const hasCodeLlama = Array.isArray(models.models) && models.models.some(m => m.model.startsWith("codellama"));
+            if (!hasCodeLlama) {
+              console.warn("⚠️ Model 'codellama' is not available at the specified endpoint.");
+              responseBox.textContent = "⚠️ Model 'codellama' not found on Ollama. Please pull it using 'ollama pull codellama'.";
+              return;
+            }
+            responseBox.textContent += "\n✅ 'codellama' model detected at endpoint.";
+          } catch (checkErr) {
+            console.error("Failed to check model availability:", checkErr);
+            responseBox.textContent = "Error contacting Ollama to verify model availability.";
+            return;
+          }
+
           const largeContext = await fetch("llm-context-large.md").then(r => r.text());
-          const result = await fetch(endpointInput.value, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: "codellama",
+
+          let fetchPayload;
+          let fetchURL = endpointInput.value;
+
+          if (selectedProtocol === "ollama") {
+            fetchPayload = {
+              // Default model is "codellama:latest", but other tags like "codellama:13b" or "codellama:7b-code" are also valid.
+              model: selectedModel || "codellama:latest",
+              temperature: 0,
               prompt: `${largeContext}
 
 You will be given a ClawMark specification written in simplified Markdown.
@@ -164,16 +225,70 @@ ClawMark input:
 
 ${prompt}`,
               stream: false
-            })
+            };
+          } else if (selectedProtocol === "openai" || selectedProtocol === "lmstudio") {
+            fetchPayload = {
+              model: selectedModel || "gpt-4",
+              temperature: 0,
+              messages: [
+                {
+                  role: "system",
+                  content: `${largeContext}
+
+You will be given a ClawMark specification written in simplified Markdown.
+Your task is to generate idiomatic Rust code that fulfills its intent.
+
+- The output must compile and pass Clippy without warnings.
+- Use Result<T, E> over unwraps.
+- Prefer async functions where I/O is implied.
+- Use Serde and appropriate crates.
+- Structure your code with idiomatic Rust best practices.
+
+Respond with only valid Rust source code. Do not include:
+- Markdown formatting
+- Explanations
+- Comments
+- Code fences (\`\`\`)
+
+Begin immediately with use, fn, mod, or struct.`
+                },
+                {
+                  role: "user",
+                  content: prompt
+                }
+              ]
+            };
+            if (!fetchURL.includes("/v1/chat/completions")) {
+              fetchURL = fetchURL.replace(/\/?$/, "/v1/chat/completions");
+            }
+          }
+
+          const result = await fetch(fetchURL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(fetchPayload)
           }).then(r => r.json());
+
+          const responseText = result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content
+            ? result.choices[0].message.content
+            : (result.response || "");
+
+          responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
           responseBox.textContent = 
-            (result.response || "")
+            (responseText
               .replace(/```(?:rust)?/gi, "")
               .replace(/^Here.*?:/i, "")
-              .trim() || "(no response)";
+              .trim()
+              .replace(/\n/g, "\n")) || "(no response)";
+
+          // Enable Clippy and Build buttons after successful generation
+          clippyBtn.disabled = false;
+          clippyBtn.title = "";
+          buildBtn.disabled = false;
+          buildBtn.title = "";
 
           if (!shell.classList.contains("hidden") && typeof emulator !== "undefined") {
-            const source = (result.response || "")
+            const source = responseText
               .replace(/```(?:rust)?/gi, "")
               .replace(/^Here.*?:/i, "")
               .trim();
@@ -210,37 +325,29 @@ ${cargoToml}
         }
       });
 
-      let v86Initialized = false;
-      document.getElementById("shellButton").addEventListener("click", () => {
-        const shell = document.getElementById("v86shell");
-        shell.classList.toggle("hidden");
-
-        if (!v86Initialized && !shell.classList.contains("hidden")) {
-          v86Initialized = true;
-
-          requestAnimationFrame(() => {
-            const emulator = new V86({
-              wasm_path: "v86/v86.wasm",
-              memory_size: 256 * 1024 * 1024,
-              vga_memory_size: 8 * 1024 * 1024,
-              screen_container: document.getElementById("v86_container"),
-              bios: { url: "v86/seabios.bin" },
-              vga_bios: { url: "v86/vgabios.bin" },
-              bzimage: { url: "v86/vmlinuz" },
-              initrd: { url: "v86/initrd" },
-              filesystem: { basefs: "v86/fs.json" },
-              autostart: true,
-              cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose"
-            });
-
-            emulator.add_listener("serial0-output-char", char => {
-              document.getElementById("output").textContent += char;
-            });
-
-            window.emulator = emulator;
-          });
-        }
+      // Initialize v86 shell automatically on page load
+      const shell = document.getElementById("v86shell");
+      const emulator = new V86({
+        wasm_path: "v86/v86.wasm",
+        memory_size: 256 * 1024 * 1024,
+        vga_memory_size: 8 * 1024 * 1024,
+        screen_container: document.getElementById("v86_container"),
+        bios: { url: "v86/seabios.bin" },
+        vga_bios: { url: "v86/vgabios.bin" },
+        bzimage: { url: "v86/vmlinuz" },
+        initrd: { url: "v86/initrd" },
+        filesystem: { basefs: "v86/fs.json" },
+        autostart: true,
+        cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose"
       });
+
+      emulator.add_listener("serial0-output-char", char => {
+        document.getElementById("output").textContent += char;
+      });
+
+      window.emulator = emulator;
+      generateBtn.disabled = false;
+      generateBtn.title = "";
     });
 
     // Add build and clippy button event listeners
@@ -266,5 +373,38 @@ ${cargoToml}
         window.marked = module.marked;
       }
     })();
+  </script>
+  <script>
+    window.addEventListener("DOMContentLoaded", async () => {
+      const responseBox = document.getElementById("output");
+      const endpointInput = document.getElementById("endpointInput");
+      const saved = localStorage.getItem("clawmark-endpoint");
+      if (saved) endpointInput.value = saved;
+
+      try {
+        const endpoint = endpointInput.value;
+        const models = await fetch(endpoint.replace(/\/generate$/, "/tags")).then(r => r.json());
+        const hasCodeLlama = Array.isArray(models.models) && models.models.some(m => m.model.startsWith("codellama"));
+        if (hasCodeLlama) {
+          responseBox.textContent += "✅ codellama model found at load.\n";
+        } else {
+          responseBox.textContent += "⚠️ codellama model not found. Please run 'ollama pull codellama'.\n";
+        }
+        // Populate the modelSelect dropdown
+        const modelSelect = document.getElementById("modelSelect");
+        if (Array.isArray(models.models)) {
+          modelSelect.innerHTML = "";
+          models.models.forEach(m => {
+            const opt = document.createElement("option");
+            opt.value = m.model;
+            opt.textContent = m.model;
+            modelSelect.appendChild(opt);
+          });
+        }
+      } catch (e) {
+        responseBox.textContent += "❌ Failed to contact Ollama on page load.\n";
+        console.error("Error verifying codellama on load:", e);
+      }
+    });
   </script>
 </html>
