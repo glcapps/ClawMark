@@ -1,68 +1,175 @@
 # ClawMark
 
-ClawMark is an intent-first pseudocode format written in Markdown for defining full applications using natural language. It enables LLMs to generate safe, idiomatic code—especially Rust—in a single pass, without boilerplate.
+ClawMark is an **intent-boundary language** written in Markdown.
 
-## ✨ Key Features
+It describes only the parts of a program an LLM cannot safely infer.
 
-- **Natural Language Syntax** – Write what you mean using lists, headers, and simple English
-- **Minimalist Semantics** – Focused enough for code generation, loose enough for rapid sketching
-- **LLM-Ready** – Designed for use with OpenAI, Claude, and local models like Mixtral or LLaMA
-- **First-Class `note:` and `todo:` Annotations** – Embed guidance and tasks in the source
-- **Clippy- and Compiler-Corrective** – Feedback is applied at the intent level, not in the generated code
-- **Editor Included** – Browser-based editor with Markdown preview and LLM integration
+The generated code is disposable.\
+The ClawMark is the source of truth.
 
-## 🧠 Philosophy
+------------------------------------------------------------------------
+
+## Why ClawMark Exists
+
+Modern coding agents already know how to write Rust (or any mainstream
+language) correctly most of the time.
+
+They fail when a problem has multiple *reasonable* implementations but
+only one *correct* behavior.
+
+Traditional specs try to describe everything.\
+Prompts try to describe enough.\
+ClawMark describes only what must not be guessed.
+
+> ClawMark reduces the solution space until all remaining
+> implementations are equivalent.
+
+Instead of telling the model how to build software, you define the
+boundaries inside which any implementation is acceptable.
+
+------------------------------------------------------------------------
+
+## Core Rule
+
+**If a competent engineer would independently make the same choice, do
+not write it.**
+
+ClawMark contains only: - invariants - semantic constraints - failure
+behavior - ownership meaning - temporal meaning
+
+Not: - loops - data structures - framework usage - idiomatic patterns -
+language mechanics
+
+------------------------------------------------------------------------
+
+## Philosophy
 
 > Fix the intent, not the output.
 
-ClawMark positions Markdown as the human-editable source of truth. When code fails, you edit the ClawMark—not the generated Rust. This makes iteration seamless and consistent.
+Compiler errors, linter feedback, and runtime failures are corrected by
+editing the ClawMark --- never the generated code.
 
-## 📦 Structure Overview
+The model regenerates a new implementation consistent with the refined
+intent.
 
-- `# tools` – Declare crates and dependencies
-- `## types` – Define data structures
-- `## User can` – Describe behaviors with intent
-- `# routes`, `# server` – REST and static file endpoints
-- `note:` – Soft constraints to guide LLM behavior
-- `todo:` – Pending decisions or clarity points
-- `# schema`, `# sql behavior` – SQL schema and intent-level query structure
-- `# understanding` – Logs model used, version, and result
+Code is a build artifact.\
+Intent is the program.
 
-## 🔧 Example
+------------------------------------------------------------------------
 
-```markdown
-# user_service module
+## What ClawMark Is
 
-# tools
-serde
-uuid
-axum
+ClawMark is closest to:
 
-# types
+-   executable behavioral constraints
+-   synthesis boundary definitions
+-   anti-hallucination specifications
+-   invariant-first architecture
 
-User
-- id is uuid
-- name
-- email
+It is **not**: - pseudocode - a DSL - a prompt template - a code
+generator config - documentation
 
-# routes
-root path prefix: /api
+------------------------------------------------------------------------
 
-GET /users
-- returns: list of User
+## What Goes Into ClawMark
 
-POST /users
-- creates new User from JSON body
-- returns 201 or error
+Write only when guessing would break correctness.
 
-# async
-- all handlers are async
+Examples of valid ClawMark information:
+
+    queue never blocks
+    new data is dropped when full
+    timestamp is capture time, not processing time
+    producer is sole writer
+    missed deadlines are counted, not retried
+    processing order must match arrival order
+
+Examples of invalid ClawMark information:
+
+    use a Vec
+    spawn a thread
+    make a struct
+    use async handlers
+    iterate through items
+    return Result
+
+------------------------------------------------------------------------
+
+## Structure Overview
+
+ClawMark uses Markdown structure as semantic grouping.
+
+Typical sections:
+
+-   `# tools` --- external capabilities required
+-   `# types` --- conceptual data shapes (not layouts)
+-   `# behavior` --- allowed and forbidden behaviors
+-   `# routes` --- external contract
+-   `note:` --- guidance that narrows interpretation
+-   `todo:` --- unresolved semantic decisions
+-   `# understanding` --- model reasoning trace
+
+The headings organize meaning; they do not prescribe implementation.
+
+------------------------------------------------------------------------
+
+## Example
+
+``` markdown
+# user service
+
+goal: manage users via API
+
+behavior:
+- creating a user generates a stable unique id
+- duplicate email is rejected
+- deleting a user makes id permanently unusable
+
+routes:
+GET /users -> list users
+POST /users -> create user
+DELETE /users/{id} -> remove user
 ```
 
-## 📄 License
+Many Rust programs satisfy this spec.\
+All correct ones behave identically.
 
-- Source code: Apeche 2.0
+------------------------------------------------------------------------
 
----
-Visit [grizzled.tech](https://grizzled.tech) for updates and documentation.
-Visit [ClawMark Editor](https://glcapps.github.io/ClawMark/public/editor.html) to see it in action
+## Workflow
+
+1.  Write ClawMark
+2.  Generate code
+3.  Compile / lint / run
+4.  Adjust ClawMark
+5.  Regenerate
+
+Never patch the generated code.
+
+------------------------------------------------------------------------
+
+## Target Use Cases
+
+ClawMark is most valuable where correctness depends on semantics rather
+than structure:
+
+-   real-time systems
+-   concurrency
+-   protocol behavior
+-   distributed coordination
+-   state machines
+-   long-lived systems where drift matters
+
+------------------------------------------------------------------------
+
+## Editor
+
+Browser editor with preview and LLM integration:
+
+https://glcapps.github.io/ClawMark/public/editor.html
+
+------------------------------------------------------------------------
+
+## License
+
+Source code: Apache 2.0
