@@ -80,6 +80,47 @@
       const hasCodeLlama = models.some(m => m.model.startsWith("codellama"));
       return { models, hasCodeLlama };
     }
+
+    // Cargo.toml generation from the ClawMark spec's `# tools` section, so the
+    // in-VM build matches whatever crates the spec (and thus the generated code)
+    // actually declares, instead of a fixed serde+warp pair.
+    const KNOWN_CRATE_DEPS = {
+      serde: 'serde = { version = "1.0", features = ["derive"] }',
+      serde_json: 'serde_json = "1"',
+      tokio: 'tokio = { version = "1", features = ["full"] }',
+      axum: 'axum = "0.7"',
+      warp: 'warp = "0.3"',
+      "actix-web": 'actix-web = "4"',
+      hyper: 'hyper = { version = "1", features = ["full"] }',
+      reqwest: 'reqwest = { version = "0.12", features = ["json"] }',
+      anyhow: 'anyhow = "1"',
+      thiserror: 'thiserror = "1"',
+      uuid: 'uuid = { version = "1", features = ["v4"] }',
+      chrono: 'chrono = "0.4"',
+      sqlx: 'sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }'
+    };
+
+    function parseClawMarkTools(specText) {
+      const lines = specText.split("\n");
+      const toolsIndex = lines.findIndex(line => /^#\s*tools\s*$/i.test(line.trim()));
+      if (toolsIndex === -1) return [];
+      const tools = [];
+      for (let i = toolsIndex + 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith("#")) break;
+        if (line) tools.push(line.toLowerCase());
+      }
+      return tools;
+    }
+
+    function buildCargoDependencies(tools) {
+      // The generation prompt always instructs the model to use Serde, regardless
+      // of whether the spec's `# tools` section mentions it.
+      const names = new Set(["serde", ...tools]);
+      return [...names]
+        .map(name => KNOWN_CRATE_DEPS[name] || `${name} = "*"`)
+        .join("\n");
+    }
   </script>
 
   <script>
@@ -335,6 +376,8 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
               .map(line => `echo "${line}" >> /root/src/main.rs`)
               .join("\n");
 
+            const tools = parseClawMarkTools(prompt);
+            const dependencies = buildCargoDependencies(tools);
             const cargoToml = `
 [package]
 name = "clawmark_gen"
@@ -342,8 +385,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-warp = "0.3"
+${dependencies}
     `.trim().split("\n").map(line => `echo "${line.replace(/"/g, '\\"')}" >> /root/Cargo.toml`).join("\n");
 
             const fullScript = `
