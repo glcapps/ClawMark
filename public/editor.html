@@ -47,6 +47,15 @@
       <button id="stopButton" class="bg-red-500 px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-300 disabled:cursor-not-allowed">Stop</button>
     </div>
   </header>
+  <div id="testPanel" class="hidden bg-gray-200 border-b border-gray-300 px-4 py-2 text-sm">
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="font-semibold">Test a route (curl'd inside the VM against its own server):</span>
+      <select id="testRouteSelect" class="text-black text-sm px-2 py-1 rounded"></select>
+      <input id="testBodyInput" class="text-black text-sm px-2 py-1 rounded flex-1" style="min-width: 12rem;" placeholder="Request body (JSON, optional)" />
+      <button id="testRouteButton" class="bg-indigo-500 px-3 py-1 rounded hover:bg-indigo-600 text-white disabled:bg-indigo-300 disabled:cursor-not-allowed">Send</button>
+    </div>
+    <pre id="testRouteOutput" class="mt-2 bg-black text-green-400 p-2 font-mono text-xs overflow-x-auto"></pre>
+  </div>
   <div class="grid grid-cols-3 h-[calc(100vh-4rem)]">
     <div id="container" class="col-span-1 border-r border-gray-300"></div>
     <div id="rendered" class="col-span-1 overflow-y-auto p-4 prose bg-white"></div>
@@ -124,6 +133,45 @@
         .join("\n");
     }
 
+    // Parses the spec's `# routes` section (method/path pairs and the optional
+    // "root path prefix:" line) so the Test panel can offer real routes instead
+    // of requiring the user to retype them.
+    function parseClawMarkRoutes(specText) {
+      const lines = specText.split("\n");
+      const routesIndex = lines.findIndex(line => /^#\s*routes\s*$/i.test(line.trim()));
+      if (routesIndex === -1) return { prefix: "", routes: [] };
+      let prefix = "";
+      const routes = [];
+      for (let i = routesIndex + 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (/^#\s/.test(line)) break;
+        const prefixMatch = line.match(/^root path prefix:\s*(\S+)/i);
+        if (prefixMatch) {
+          prefix = prefixMatch[1];
+          continue;
+        }
+        const routeMatch = line.match(/^(GET|POST|PUT|DELETE|PATCH)\s+(\S+)/i);
+        if (routeMatch) routes.push({ method: routeMatch[1].toUpperCase(), path: routeMatch[2] });
+      }
+      return { prefix, routes };
+    }
+
+    function joinRoutePath(prefix, path) {
+      if (!prefix) return path;
+      return prefix.replace(/\/$/, "") + "/" + path.replace(/^\//, "");
+    }
+
+    // Finds "bind to <host>:<port>" anywhere in the spec; falls back to the
+    // Rust ecosystem's common default of 127.0.0.1:8080.
+    function parseClawMarkBindAddress(specText) {
+      const match = specText.match(/bind to\s+([\d.]+):(\d+)/i);
+      return match ? `${match[1]}:${match[2]}` : "127.0.0.1:8080";
+    }
+
+    function shellSingleQuote(str) {
+      return `'${str.replace(/'/g, `'\\''`)}'`;
+    }
+
     // Strips code fences, a leading "Here's..." preamble, and anything the model
     // wrote past the `mod end {}` stop marker. Used for both the on-screen preview
     // and the source actually written into the VM, so they never diverge.
@@ -160,6 +208,7 @@
     let lastBuildOutput = "";
     let lastClippyOutput = "";
     let runningPid = null;
+    let lastSpecText = "";
 
     function runVmCommand(command) {
       return new Promise(resolve => {
@@ -458,6 +507,7 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
           buildBtn.title = "";
 
           // New code invalidates any previous build/running process.
+          lastSpecText = prompt;
           runBtn.disabled = true;
           runBtn.title = "Build before running.";
           if (runningPid) {
@@ -466,6 +516,7 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
           }
           stopBtn.disabled = true;
           stopBtn.title = "Nothing is running.";
+          hideTestPanel();
 
           if (!shell.classList.contains("hidden") && typeof emulator !== "undefined") {
             const codeLines = cleanedSource
@@ -530,6 +581,33 @@ ${cargoToml}
     // Add build, clippy, run and stop button event listeners
     const runBtnHandle = document.getElementById("runButton");
     const stopBtnHandle = document.getElementById("stopButton");
+    const testPanel = document.getElementById("testPanel");
+    const testRouteSelect = document.getElementById("testRouteSelect");
+    const testBodyInput = document.getElementById("testBodyInput");
+    const testRouteButton = document.getElementById("testRouteButton");
+    const testRouteOutput = document.getElementById("testRouteOutput");
+
+    function showTestPanel() {
+      const { prefix, routes } = parseClawMarkRoutes(lastSpecText);
+      if (routes.length === 0) {
+        testPanel.classList.add("hidden");
+        return;
+      }
+      testRouteSelect.innerHTML = "";
+      routes.forEach(route => {
+        const opt = document.createElement("option");
+        opt.value = JSON.stringify(route);
+        opt.textContent = `${route.method} ${joinRoutePath(prefix, route.path)}`;
+        testRouteSelect.appendChild(opt);
+      });
+      testRouteOutput.textContent = "";
+      testPanel.classList.remove("hidden");
+    }
+
+    function hideTestPanel() {
+      testPanel.classList.add("hidden");
+      testRouteOutput.textContent = "";
+    }
 
     document.getElementById("buildButton").addEventListener("click", async () => {
       if (window.emulator) {
@@ -561,6 +639,7 @@ ${cargoToml}
         runningPid = match[1];
         stopBtnHandle.disabled = false;
         stopBtnHandle.title = "";
+        showTestPanel();
       } else {
         document.getElementById("outputLogs").textContent += "\n❌ Could not determine the process id — is the binary built?\n";
       }
@@ -573,6 +652,25 @@ ${cargoToml}
       runningPid = null;
       stopBtnHandle.disabled = true;
       stopBtnHandle.title = "Nothing is running.";
+      hideTestPanel();
+    });
+
+    testRouteButton.addEventListener("click", async () => {
+      if (!window.emulator || !runningPid || !testRouteSelect.value) return;
+      const route = JSON.parse(testRouteSelect.value);
+      const { prefix } = parseClawMarkRoutes(lastSpecText);
+      const bindAddress = parseClawMarkBindAddress(lastSpecText);
+      const fullPath = joinRoutePath(prefix, route.path);
+      const body = testBodyInput.value.trim();
+
+      let curlCmd = `curl -s -w '\\nHTTP_STATUS:%{http_code}\\n' -X ${route.method} http://${bindAddress}${fullPath}`;
+      if (body && route.method !== "GET" && route.method !== "DELETE") {
+        curlCmd += ` -H 'Content-Type: application/json' -d ${shellSingleQuote(body)}`;
+      }
+
+      testRouteOutput.textContent = "Sending...";
+      const output = await runVmCommand(curlCmd);
+      testRouteOutput.textContent = output.trim() || "(empty response)";
     });
   </script>
 </body>
