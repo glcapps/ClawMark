@@ -190,20 +190,22 @@
           // Store endpoint in localStorage
           localStorage.setItem("clawmark-endpoint", endpointInput.value);
 
-          // Check if codellama is available on Ollama
-          // Note: The default model used is "codellama:latest", but other tags like "codellama:13b" or "codellama:7b-code" might be valid options.
-          try {
-            const models = await fetch(endpointInput.value.replace(/\/generate$/, "/tags")).then(r => r.json());
-            const hasCodeLlama = Array.isArray(models.models) && models.models.some(m => m.model.startsWith("codellama"));
-            if (!hasCodeLlama) {
-              console.warn("⚠️ Model 'codellama' is not available at the specified endpoint.");
-              responseBox.textContent = "⚠️ Model 'codellama' not found on Ollama. Please pull it using 'ollama pull codellama'.";
+          // The Ollama /tags endpoint and the codellama requirement are specific to the
+          // Ollama protocol; OpenAI/LMStudio expose models differently, so only gate on it here.
+          if (selectedProtocol === "ollama") {
+            try {
+              const models = await fetch(endpointInput.value.replace(/\/generate$/, "/tags")).then(r => r.json());
+              const hasCodeLlama = Array.isArray(models.models) && models.models.some(m => m.model.startsWith("codellama"));
+              if (!hasCodeLlama) {
+                console.warn("⚠️ Model 'codellama' is not available at the specified endpoint.");
+                responseBox.textContent = "⚠️ Model 'codellama' not found on Ollama. Please pull it using 'ollama pull codellama'.";
+                return;
+              }
+            } catch (checkErr) {
+              console.error("Failed to check model availability:", checkErr);
+              responseBox.textContent += "❌ Error contacting Ollama to verify model availability.\n";
               return;
             }
-          } catch (checkErr) {
-            console.error("Failed to check model availability:", checkErr);
-            responseBox.textContent += "❌ Error contacting Ollama to verify model availability.\n";
-            return;
           }
 
           const largeContext = await fetch("llm-context-large.md").then(r => r.text());
@@ -376,8 +378,8 @@ ${cargoToml}
     // Add build and clippy button event listeners
     document.getElementById("buildButton").addEventListener("click", () => {
       if (window.emulator) {
-        document.getElementById("outputLogs").textContent += "\n🚧 Building /root/main.rs...\n";
-        emulator.serial0_send("rustc /root/main.rs -o /root/main && echo Build complete\n");
+        document.getElementById("outputLogs").textContent += "\n🚧 Building /root/src/main.rs via cargo...\n";
+        emulator.serial0_send("cargo build --manifest-path=/root/Cargo.toml && echo Build complete\n");
       }
     });
 
