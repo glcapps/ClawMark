@@ -61,7 +61,14 @@
     <div id="rendered" class="col-span-1 overflow-y-auto p-4 prose bg-white"></div>
     <div class="col-span-1 flex flex-col">
       <div id="outputLogs" class="flex-1 overflow-y-auto bg-black text-green-400 p-2 font-mono text-sm"></div>
-      <div id="outputCode" class="flex-1 overflow-y-auto bg-gray-900 text-green-200 p-2 font-mono text-sm border-t border-gray-600"></div>
+      <div class="flex items-center justify-between bg-gray-800 text-gray-200 text-xs px-2 py-1 border-t border-gray-600">
+        <span>Generated Code</span>
+        <label class="flex items-center gap-1 cursor-pointer">
+          <input type="checkbox" id="diffToggle" disabled />
+          Diff vs previous
+        </label>
+      </div>
+      <div id="outputCode" class="flex-1 overflow-y-auto bg-gray-900 text-green-200 p-2 font-mono text-sm"></div>
     </div>
   </div>
 
@@ -172,6 +179,57 @@
       return `'${str.replace(/'/g, `'\\''`)}'`;
     }
 
+    // ClawMark's core claim is that many different implementations satisfy the
+    // same spec. A line-level diff between successive generations (especially
+    // after a feedback-driven regeneration) is how that claim is actually shown,
+    // rather than asserted.
+    function computeLineDiff(oldText, newText) {
+      const oldLines = oldText.split("\n");
+      const newLines = newText.split("\n");
+      const m = oldLines.length;
+      const n = newLines.length;
+      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+      for (let i = m - 1; i >= 0; i--) {
+        for (let j = n - 1; j >= 0; j--) {
+          dp[i][j] = oldLines[i] === newLines[j]
+            ? dp[i + 1][j + 1] + 1
+            : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+      }
+      const ops = [];
+      let i = 0, j = 0;
+      while (i < m && j < n) {
+        if (oldLines[i] === newLines[j]) {
+          ops.push({ type: "same", line: oldLines[i] });
+          i++; j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+          ops.push({ type: "removed", line: oldLines[i] });
+          i++;
+        } else {
+          ops.push({ type: "added", line: newLines[j] });
+          j++;
+        }
+      }
+      while (i < m) { ops.push({ type: "removed", line: oldLines[i] }); i++; }
+      while (j < n) { ops.push({ type: "added", line: newLines[j] }); j++; }
+      return ops;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function renderDiff(oldText, newText) {
+      const ops = computeLineDiff(oldText, newText);
+      const html = ops.map(op => {
+        const escaped = escapeHtml(op.line) || "&nbsp;";
+        if (op.type === "added") return `<div class="bg-green-900 text-green-300">+ ${escaped}</div>`;
+        if (op.type === "removed") return `<div class="bg-red-900 text-red-300 line-through opacity-70">- ${escaped}</div>`;
+        return `<div class="text-gray-400">&nbsp;&nbsp;${escaped}</div>`;
+      }).join("");
+      document.getElementById("outputCode").innerHTML = html;
+    }
+
     // Strips code fences, a leading "Here's..." preamble, and anything the model
     // wrote past the `mod end {}` stop marker. Used for both the on-screen preview
     // and the source actually written into the VM, so they never diverge.
@@ -209,6 +267,8 @@
     let lastClippyOutput = "";
     let runningPid = null;
     let lastSpecText = "";
+    let previousCleanedSource = "";
+    let currentCleanedSource = "";
 
     function runVmCommand(command) {
       return new Promise(resolve => {
@@ -355,6 +415,15 @@
       stopBtn.disabled = true;
       stopBtn.title = "Nothing is running.";
 
+      const diffToggle = document.getElementById("diffToggle");
+      diffToggle.addEventListener("change", () => {
+        if (diffToggle.checked) {
+          renderDiff(previousCleanedSource, currentCleanedSource);
+        } else {
+          document.getElementById("outputCode").textContent = currentCleanedSource || "(no response)";
+        }
+      });
+
       document.getElementById("generateButton").addEventListener("click", async () => {
         await waitForEmulatorReady();
         const prompt = editor.getValue();
@@ -499,6 +568,14 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
           });
 
           responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
+
+          previousCleanedSource = currentCleanedSource;
+          currentCleanedSource = cleanedSource;
+          if (previousCleanedSource) {
+            responseBox.textContent += "\n🔀 Diff vs previous generation available (toggle below the code panel).\n";
+          }
+          diffToggle.checked = false;
+          diffToggle.disabled = !previousCleanedSource;
 
           // Enable Clippy and Build buttons after successful generation
           clippyBtn.disabled = false;
