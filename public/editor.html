@@ -132,6 +132,24 @@
         .replace(/mod end\s*{[^}]*}\s*[\s\S]*$/i, "mod end {}")
         .trim();
     }
+
+    // Checks the cleaned response against the contract the generation prompt asks
+    // for (start with use/fn/mod/struct, end with `mod end {}`), so a malformed or
+    // truncated model response is surfaced in the log instead of silently reaching
+    // the VM as a broken build.
+    function validateGeneratedRustSource(cleanedSource) {
+      if (!cleanedSource) {
+        return { ok: false, warnings: ["Model returned an empty response."] };
+      }
+      const warnings = [];
+      if (!/^\s*(use|fn|mod|struct)\b/.test(cleanedSource)) {
+        warnings.push("Response doesn't start with use/fn/mod/struct as instructed — model may have added extra preamble.");
+      }
+      if (!/mod end\s*{\s*}/.test(cleanedSource)) {
+        warnings.push("Response is missing the `mod end {}` terminator — output may be truncated.");
+      }
+      return { ok: true, warnings };
+    }
   </script>
 
   <script>
@@ -359,10 +377,19 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
             ? result.choices[0].message.content
             : (result.response || "");
 
-          responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
           const cleanedSource = cleanGeneratedRustSource(responseText);
-
           document.getElementById("outputCode").textContent = cleanedSource || "(no response)";
+
+          const validation = validateGeneratedRustSource(cleanedSource);
+          if (!validation.ok) {
+            responseBox.textContent += `\n❌ Generation failed: ${validation.warnings.join(" ")}\n`;
+            return;
+          }
+          validation.warnings.forEach(w => {
+            responseBox.textContent += `\n⚠️ ${w}\n`;
+          });
+
+          responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
 
           // Enable Clippy and Build buttons after successful generation
           clippyBtn.disabled = false;
