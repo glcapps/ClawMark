@@ -43,6 +43,8 @@
       <button id="generateButton" class="bg-green-500 px-3 py-1 rounded hover:bg-green-600 disabled:bg-green-300 disabled:cursor-not-allowed">Generate</button>
       <button id="clippyButton" class="bg-purple-500 px-3 py-1 rounded hover:bg-purple-600 disabled:bg-purple-300 disabled:cursor-not-allowed">Clippy</button>
       <button id="buildButton" class="bg-yellow-500 px-3 py-1 rounded hover:bg-yellow-600 disabled:bg-yellow-300 disabled:cursor-not-allowed">Build</button>
+      <button id="runButton" class="bg-teal-500 px-3 py-1 rounded hover:bg-teal-600 disabled:bg-teal-300 disabled:cursor-not-allowed">Run</button>
+      <button id="stopButton" class="bg-red-500 px-3 py-1 rounded hover:bg-red-600 disabled:bg-red-300 disabled:cursor-not-allowed">Stop</button>
     </div>
   </header>
   <div class="grid grid-cols-3 h-[calc(100vh-4rem)]">
@@ -157,6 +159,7 @@
     let vmCaptureBuffer = null;
     let lastBuildOutput = "";
     let lastClippyOutput = "";
+    let runningPid = null;
 
     function runVmCommand(command) {
       return new Promise(resolve => {
@@ -294,6 +297,14 @@
       const buildBtn = document.getElementById("buildButton");
       buildBtn.disabled = true;
       buildBtn.title = "Generate code before building.";
+
+      const runBtn = document.getElementById("runButton");
+      runBtn.disabled = true;
+      runBtn.title = "Build before running.";
+
+      const stopBtn = document.getElementById("stopButton");
+      stopBtn.disabled = true;
+      stopBtn.title = "Nothing is running.";
 
       document.getElementById("generateButton").addEventListener("click", async () => {
         await waitForEmulatorReady();
@@ -446,6 +457,16 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
           buildBtn.disabled = false;
           buildBtn.title = "";
 
+          // New code invalidates any previous build/running process.
+          runBtn.disabled = true;
+          runBtn.title = "Build before running.";
+          if (runningPid) {
+            window.emulator.serial0_send(`kill ${runningPid}\n`);
+            runningPid = null;
+          }
+          stopBtn.disabled = true;
+          stopBtn.title = "Nothing is running.";
+
           if (!shell.classList.contains("hidden") && typeof emulator !== "undefined") {
             const codeLines = cleanedSource
               .replace(/\\/g, "\\\\")
@@ -506,11 +527,21 @@ ${cargoToml}
       generateBtn.title = "";
     });
 
-    // Add build and clippy button event listeners
+    // Add build, clippy, run and stop button event listeners
+    const runBtnHandle = document.getElementById("runButton");
+    const stopBtnHandle = document.getElementById("stopButton");
+
     document.getElementById("buildButton").addEventListener("click", async () => {
       if (window.emulator) {
         document.getElementById("outputLogs").textContent += "\n🚧 Building /root/src/main.rs via cargo...\n";
         lastBuildOutput = await runVmCommand("cargo build --manifest-path=/root/Cargo.toml");
+        if (hasLikelyBuildError(lastBuildOutput)) {
+          runBtnHandle.disabled = true;
+          runBtnHandle.title = "Fix build errors before running.";
+        } else {
+          runBtnHandle.disabled = false;
+          runBtnHandle.title = "";
+        }
       }
     });
 
@@ -519,6 +550,29 @@ ${cargoToml}
         document.getElementById("outputLogs").textContent += "\n🔍 Running cargo clippy...\n";
         lastClippyOutput = await runVmCommand("cargo clippy --manifest-path=/root/Cargo.toml");
       }
+    });
+
+    runBtnHandle.addEventListener("click", async () => {
+      if (!window.emulator || runningPid) return;
+      document.getElementById("outputLogs").textContent += "\n▶️ Running /root/target/debug/clawmark_gen...\n";
+      const output = await runVmCommand("/root/target/debug/clawmark_gen & echo RUN_PID:$!");
+      const match = output.match(/RUN_PID:(\d+)/);
+      if (match) {
+        runningPid = match[1];
+        stopBtnHandle.disabled = false;
+        stopBtnHandle.title = "";
+      } else {
+        document.getElementById("outputLogs").textContent += "\n❌ Could not determine the process id — is the binary built?\n";
+      }
+    });
+
+    stopBtnHandle.addEventListener("click", async () => {
+      if (!window.emulator || !runningPid) return;
+      document.getElementById("outputLogs").textContent += `\n⏹️ Stopping process ${runningPid}...\n`;
+      await runVmCommand(`kill ${runningPid}`);
+      runningPid = null;
+      stopBtnHandle.disabled = true;
+      stopBtnHandle.title = "Nothing is running.";
     });
   </script>
 </body>
