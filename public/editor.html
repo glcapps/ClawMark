@@ -150,6 +150,48 @@
       }
       return { ok: true, warnings };
     }
+
+    // Runs a command in the v86 shell and resolves with everything it printed
+    // before a sentinel marker, so callers can capture cargo build/clippy output
+    // instead of only seeing it scroll by in the log panel.
+    let vmCaptureBuffer = null;
+    let lastBuildOutput = "";
+    let lastClippyOutput = "";
+
+    function runVmCommand(command) {
+      return new Promise(resolve => {
+        vmCaptureBuffer = "";
+        const sentinel = "__CLAWMARK_CMD_DONE__";
+        const poll = setInterval(() => {
+          const idx = vmCaptureBuffer.indexOf(sentinel);
+          if (idx !== -1) {
+            clearInterval(poll);
+            const output = vmCaptureBuffer.slice(0, idx);
+            vmCaptureBuffer = null;
+            resolve(output);
+          }
+        }, 150);
+        window.emulator.serial0_send(`${command}; echo "${sentinel}"\n`);
+      });
+    }
+
+    function hasLikelyBuildError(output) {
+      return /error(\[|:|\s)/i.test(output) || /warning:/i.test(output) || /check failed/i.test(output);
+    }
+
+    // Folds the previous cargo build/clippy output back into the next generation
+    // request, so fixing a compile error doesn't require the user to manually
+    // copy-paste cargo's output into the spec.
+    function buildRegenerationFeedback() {
+      const parts = [];
+      if (lastBuildOutput && hasLikelyBuildError(lastBuildOutput)) {
+        parts.push(`Previous \`cargo build\` output (fix the underlying issue):\n${lastBuildOutput.trim()}`);
+      }
+      if (lastClippyOutput && hasLikelyBuildError(lastClippyOutput)) {
+        parts.push(`Previous \`cargo clippy\` output (fix these lints):\n${lastClippyOutput.trim()}`);
+      }
+      return parts.length ? `\n\n${parts.join("\n\n")}\n` : "";
+    }
   </script>
 
   <script>
@@ -288,6 +330,13 @@
             }
           }
 
+          const regenerationFeedback = buildRegenerationFeedback();
+          if (regenerationFeedback) {
+            responseBox.textContent += "\n📋 Including previous build/clippy errors as feedback for regeneration.\n";
+          }
+          lastBuildOutput = "";
+          lastClippyOutput = "";
+
           const largeContext = await fetch("llm-context-large.md").then(r => r.text());
 
           let fetchPayload;
@@ -323,7 +372,7 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
 
 ClawMark input:
 
-${prompt}`,
+${prompt}${regenerationFeedback}`,
               stream: false
             };
           } else if (selectedProtocol === "openai" || selectedProtocol === "lmstudio") {
@@ -358,7 +407,7 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
                 },
                 {
                   role: "user",
-                  content: prompt
+                  content: `${prompt}${regenerationFeedback}`
                 }
               ]
             };
@@ -449,6 +498,7 @@ ${cargoToml}
 
       emulator.add_listener("serial0-output-char", char => {
         document.getElementById("outputLogs").textContent += char;
+        if (vmCaptureBuffer !== null) vmCaptureBuffer += char;
       });
 
       window.emulator = emulator;
@@ -457,17 +507,17 @@ ${cargoToml}
     });
 
     // Add build and clippy button event listeners
-    document.getElementById("buildButton").addEventListener("click", () => {
+    document.getElementById("buildButton").addEventListener("click", async () => {
       if (window.emulator) {
         document.getElementById("outputLogs").textContent += "\n🚧 Building /root/src/main.rs via cargo...\n";
-        emulator.serial0_send("cargo build --manifest-path=/root/Cargo.toml && echo Build complete\n");
+        lastBuildOutput = await runVmCommand("cargo build --manifest-path=/root/Cargo.toml");
       }
     });
 
-    document.getElementById("clippyButton").addEventListener("click", () => {
+    document.getElementById("clippyButton").addEventListener("click", async () => {
       if (window.emulator) {
         document.getElementById("outputLogs").textContent += "\n🔍 Running cargo clippy...\n";
-        emulator.serial0_send("cargo clippy --manifest-path=/root/Cargo.toml || echo Clippy check failed\n");
+        lastClippyOutput = await runVmCommand("cargo clippy --manifest-path=/root/Cargo.toml");
       }
     });
   </script>
