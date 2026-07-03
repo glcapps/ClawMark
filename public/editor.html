@@ -121,6 +121,17 @@
         .map(name => KNOWN_CRATE_DEPS[name] || `${name} = "*"`)
         .join("\n");
     }
+
+    // Strips code fences, a leading "Here's..." preamble, and anything the model
+    // wrote past the `mod end {}` stop marker. Used for both the on-screen preview
+    // and the source actually written into the VM, so they never diverge.
+    function cleanGeneratedRustSource(responseText) {
+      return responseText
+        .replace(/```(?:rust)?/gi, "")
+        .replace(/^Here.*?:/i, "")
+        .replace(/mod end\s*{[^}]*}\s*[\s\S]*$/i, "mod end {}")
+        .trim();
+    }
   </script>
 
   <script>
@@ -349,13 +360,9 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
             : (result.response || "");
 
           responseBox.textContent += "\n💡 Hydrating ClawMark code for virtual shell.";
-          const trimmedResponse = responseText
-            .replace(/```(?:rust)?/gi, "")
-            .replace(/^Here.*?:/i, "")
-            .replace(/mod end\s*{[^}]*}\s*[\s\S]*$/i, "mod end {}")
-            .trim();
+          const cleanedSource = cleanGeneratedRustSource(responseText);
 
-          document.getElementById("outputCode").textContent = trimmedResponse || "(no response)";
+          document.getElementById("outputCode").textContent = cleanedSource || "(no response)";
 
           // Enable Clippy and Build buttons after successful generation
           clippyBtn.disabled = false;
@@ -364,12 +371,7 @@ Terminate the response with an empty \`mod end {}\` block. Do not include anythi
           buildBtn.title = "";
 
           if (!shell.classList.contains("hidden") && typeof emulator !== "undefined") {
-            const source = responseText
-              .replace(/```(?:rust)?/gi, "")
-              .replace(/^Here.*?:/i, "")
-              .trim();
-
-            const codeLines = source
+            const codeLines = cleanedSource
               .replace(/\\/g, "\\\\")
               .replace(/"/g, '\\"')
               .split("\n")
